@@ -1,16 +1,20 @@
-version: "3.9"  # Docker Compose file format version
+version: "3.9"  # Compose file version (3.9 = latest stable for Swarm + Compose)
 
 ###############################
 #          SERVICES           #
 ###############################
 services:
-  app:
-    container_name: my_app_container  # Optional: Name of container
+
+  ###############################
+  #        WEB APPLICATION
+  ###############################
+  app:  # service_name
+    container_name: my_app_container   # Optional: give a fixed name to the container
 
     image: nginx:latest   # Use an existing image
 
     # Alternative to using "image": build from Dockerfile
-    build:
+    build: # tells Docker how to build the image
       context: ./app            # Folder containing Dockerfile
       dockerfile: Dockerfile    # Optional if file is named Dockerfile
       args:                     # Build-time variables
@@ -55,7 +59,15 @@ services:
     # Restart policy
     restart: always  # no | always | on-failure | unless-stopped
 
-    # Health Check
+    ##################################################################################
+    # Health Check: Checks if the container is actually healthy (not just running).  #
+    # why it matter:                                                                 #
+    # - app inside crashed                                                           #
+    # - DB still starting                                                            #
+    # - service unresponsive                                                         #
+    # - wrong config, stuck, timeout                                                 #
+    ##################################################################################
+
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost/"] # Command to run
       interval: 30s   # Time between checks
@@ -63,7 +75,16 @@ services:
       retries: 3
       start_period: 10s
 
-    # Logging options
+    ################################################################################
+    # Logging options : Controls how container logs are stored and rotated.        #
+    #By default, Docker logs go into /var/lib/docker/containers/... as "json-file".#
+    #Usecase:                                                                      #
+    # - Prevents logs from growing huge (e.g., 20GB)                               #
+    # - Lets you use centralized logging like syslog, fluentd, Loki, splunk, etc.  #
+    # - Controls log retention                                                     #
+    ################################################################################
+
+    
     logging:
       driver: json-file       # json-file | syslog | journald | none
       options:
@@ -97,9 +118,11 @@ services:
       - mysql
       - redis
 
-    # Device mapping (for hardware access)
+    # Device mapping (for hardware access) 
+    # Allows a container to access host hardware.
     devices:
-      - "/dev/ttyUSB0:/dev/ttyUSB0"
+      - "/dev/ttyUSB0:/dev/ttyUSB0" # This passes a USB serial device inside the container.
+    # USB device | serial port | GPU | modem | sound hardware | special kernel interface
 
     # TTY mode for interactive containers
     tty: true
@@ -148,13 +171,13 @@ networks:
 ###############################
 #           SECRETS           #
 ###############################
-secrets:
+secrets: #Swarm only 
   db_password:
     file: ./secrets/db_password.txt     # Load secret from file
 
 ###############################
 #           CONFIGS           #
 ###############################
-configs:
+configs: #Swarm only
   nginx_config:
     file: ./config/nginx.conf
