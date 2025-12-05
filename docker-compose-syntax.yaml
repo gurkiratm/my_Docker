@@ -1,149 +1,184 @@
 version: "3.9"  # Compose file version (3.9 = latest stable for Swarm + Compose)
 
 ###############################
-#          SERVICES           #
+#          SERVICES
 ###############################
 services:
 
   ###############################
   #        WEB APPLICATION
   ###############################
-  app:  # service_name
+  app:
     container_name: my_app_container   # Optional: give a fixed name to the container
 
-    image: nginx:latest   # Use an existing image
+    # -------------------------------
+    # IMAGE OR BUILD CONFIG
+    # -------------------------------
 
-    # Alternative to using "image": build from Dockerfile
-    build: # tells Docker how to build the image
-      context: ./app            # Folder containing Dockerfile
-      dockerfile: Dockerfile    # Optional if file is named Dockerfile
-      args:                     # Build-time variables
+    # If you have Dockerfile and want to build locally:
+    build:
+      context: ./app          # Path to directory containing Dockerfile
+      dockerfile: Dockerfile  # Filename (optional if name is exactly "Dockerfile")
+      args:                   # Build-time variables
         APP_ENV: production
-      target: final             # Multi-stage build target
-      ssh: default              # Pass SSH keys to build (for private repos)
+      target: final           # Multi-stage build final stage
+      ssh: default            # Pass SSH key during build (for private repos)
 
-    command: ["nginx", "-g", "daemon off;"] # Override default command
-    entrypoint: ["/docker-entrypoint.sh"]   # Override entrypoint
+    # If both "image" and "build" exist:
+    # - build: tells HOW to build
+    # - image: tells final NAME/TAG for the built image
+    image: myapp:latest       # Useful for tagging + pushing to registry
 
-    # Pass environment variables
+    # -------------------------------
+    # COMMAND & ENTRYPOINT
+    # -------------------------------
+    command: ["python3", "app.py"]      # Override default CMD in Dockerfile
+    entrypoint: ["/docker-entrypoint.sh"]  # Override default ENTRYPOINT
+
+    working_dir: /usr/src/app           # Set working directory
+    user: "1000:1000"                   # Run container as this UID:GID (non-root)
+
+    # -------------------------------
+    # ENVIRONMENT VARIABLES
+    # -------------------------------
     environment:
-      APP_MODE: "production"
-      DB_HOST: "mysql"
-      SECRET_KEY: "${SECRET_KEY}"   # Load from shell env
+      APP_MODE: "production"            # Environment variable
+      DB_HOST: "mysql"                  # Link to other service
+      SECRET_KEY: "${SECRET_KEY}"       # Load from machine environment variable
 
     env_file:
-      - .env        # Load environment variables from file
+      - .env         # Load environment variables from .env file
 
-    working_dir: /usr/src/app     # Set working directory
-
-    user: "1000:1000"             # User inside container
-
-    # Ports mapping
+    # -------------------------------
+    # NETWORK PORTS
+    # -------------------------------
     ports:
-      - "8080:80"      # host:container
+      - "8080:80"     # HOST:CONTAINER → Expose app on localhost:8080
 
-    # Expose port (internal network only)
     expose:
-      - "80"
+      - "80"          # Internal network-only exposure (no host binding)
 
-    # Volumes binding
+    # -------------------------------
+    # STORAGE / VOLUMES
+    # -------------------------------
     volumes:
-      - ./app:/usr/share/nginx/html:ro      # Host → Container
-      - uploads:/var/www/uploads            # Named volume
+      - ./app:/usr/share/nginx/html:ro     # Bind mount local directory
+      - uploads:/var/www/uploads           # Named volume for persistent storage
 
-    # Attach to custom networks
+    tmpfs:
+      - /tmp                                # In-memory filesystem (fast, secure)
+
+    # -------------------------------
+    # NETWORKS
+    # -------------------------------
     networks:
       - frontend
       - backend
 
-    # Restart policy
-    restart: always  # no | always | on-failure | unless-stopped
+    # -------------------------------
+    # DEPENDENCY ORDER
+    # -------------------------------
+    depends_on:
+      - mysql       # Start mysql service first
+      - redis       # Start redis service first
 
-    ##################################################################################
-    # Health Check: Checks if the container is actually healthy (not just running).  #
-    # why it matter:                                                                 #
-    # - app inside crashed                                                           #
-    # - DB still starting                                                            #
-    # - service unresponsive                                                         #
-    # - wrong config, stuck, timeout                                                 #
-    ##################################################################################
+    # -------------------------------
+    # HEALTH CHECK
+    # Checks if the container is actually healthy (not just running).  
+    # why it matter:
+    # - app inside crashed
+    # - DB still starting
+    # - service unresponsive
+    # - wrong config, stuck, timeout
+    # -------------------------------
 
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost/"] # Command to run
-      interval: 30s   # Time between checks
-      timeout: 5s
-      retries: 3
-      start_period: 10s
+    healthcheck:               
+      test: ["CMD", "curl", "-f", "http://localhost/"]  # Basic health command
+      interval: 30s     # Run health check every 30 seconds
+      timeout: 5s       # Fail if command takes >5 secs
+      retries: 3        # Mark container unhealthy after 3 failures
+      start_period: 10s # Grace period for container to boot
 
-    ################################################################################
-    # Logging options : Controls how container logs are stored and rotated.        #
-    #By default, Docker logs go into /var/lib/docker/containers/... as "json-file".#
-    #Usecase:                                                                      #
-    # - Prevents logs from growing huge (e.g., 20GB)                               #
-    # - Lets you use centralized logging like syslog, fluentd, Loki, splunk, etc.  #
-    # - Controls log retention                                                     #
-    ################################################################################
-
+    # -------------------------------
+    # LOGGING CONFIGURATION
+    # Controls how container logs are stored and rotated.
+    # By default, Docker logs go into /var/lib/docker/containers/... as "json-file".
+    # Usecase:
+    # - Prevents logs from growing huge (e.g., 20GB)
+    # - Lets you use centralized logging like syslog, fluentd, Loki, splunk, etc.
+    # - Controls log retention
+    # -------------------------------
     
     logging:
-      driver: json-file       # json-file | syslog | journald | none
+      driver: json-file        # Default docker log driver
       options:
-        max-size: "10m"
-        max-file: "3"
+        max-size: "10m"        # Rotate log file at 10MB
+        max-file: "3"          # Keep last 3 rotated logs
 
-    # Resource limits (Swarm only)
+    # -------------------------------
+    # SECURITY OPTIONS
+    # -------------------------------
+    privileged: false           # true = full host access (dangerous)
+    read_only: false            # root filesystem read-only
+    cap_add:                    # Add Linux kernel capabilities
+      - NET_ADMIN               # Example: allow network admin operations
+    cap_drop:                   # Drop capabilities for security
+      - MKNOD
+    security_opt:
+      - no-new-privileges:true  # Prevent privilege escalation
+
+    # -------------------------------
+    # DEVICE MAPPING (HARDWARE ACCESS)
+    # -------------------------------
+    devices:
+      - "/dev/ttyUSB0:/dev/ttyUSB0"   # Pass host USB/serial/GPU device to container
+
+    # -------------------------------
+    # RESTART POLICY
+    # -------------------------------
+    restart: unless-stopped   # Keep running unless explicitly stopped
+
+    # -------------------------------
+    # DOCKER SWARM DEPLOY OPTIONS
+    # (Ignored by docker-compose, used by: docker stack deploy)
+    # -------------------------------
     deploy:
-      replicas: 2     # Number of containers (Swarm mode only)
+      replicas: 2   # Run 2 copies of this service (Swarm-only)
       restart_policy:
         condition: on-failure
         delay: 5s
         max_attempts: 3
 
-      resources:
+      resources:     # Resource limits
         limits:
           cpus: "0.5"
           memory: 512M
         reservations:
-          cpus: "0.25"
+          cpus: "0.2"
           memory: 256M
 
-      # Placement constraints (Swarm only)
-      placement:
+      placement:     # Scheduling rules for Swarm nodes
         constraints:
           - "node.role == worker"
-          - "node.labels.region == india"
+          - "node.labels.region == asia"
 
-    # Depends on ensures startup order (non-blocking delay)
-    depends_on:
-      - mysql
-      - redis
-
-    # Device mapping (for hardware access) 
-    # Allows a container to access host hardware.
-    devices:
-      - "/dev/ttyUSB0:/dev/ttyUSB0" # This passes a USB serial device inside the container.
-    # USB device | serial port | GPU | modem | sound hardware | special kernel interface
-
-    # TTY mode for interactive containers
-    tty: true
-    stdin_open: true  # Keep STDIN open
-
-  ####################################
-  # Another Example Service - MySQL
-  ####################################
+  ###############################
+  #        MYSQL DATABASE
+  ###############################
   mysql:
     image: mysql:8
     environment:
       MYSQL_ROOT_PASSWORD: rootpass
       MYSQL_DATABASE: appdb
     volumes:
-      - mysql_data:/var/lib/mysql
+      - mysql_data:/var/lib/mysql      # Persist data
     networks:
       - backend
+    restart: always
 
-  ####################################
-  # Redis Example
-  ####################################
+  ###############################
+  #        REDIS CACHE
+  ###############################
   redis:
     image: redis:7
     command: ["redis-server", "--appendonly", "yes"]
@@ -153,31 +188,31 @@ services:
       - backend
 
 ###############################
-#          VOLUMES            #
+#          VOLUMES
 ###############################
 volumes:
-  uploads: {}     # Named volume
-  mysql_data: {}  # Persistent MySQL storage
+  uploads: {}     # Named volume for persistent user uploads
+  mysql_data: {}  # Volume for MySQL DB data
 
 ###############################
-#          NETWORKS           #
+#          NETWORKS
 ###############################
 networks:
   frontend:
-    driver: bridge    # Default driver
+    driver: bridge    # Default driver for local networking
   backend:
     driver: bridge
 
 ###############################
-#           SECRETS           #
+#           SECRETS (Swarm only)
 ###############################
-secrets: #Swarm only 
+secrets:
   db_password:
-    file: ./secrets/db_password.txt     # Load secret from file
+    file: ./secrets/db_password.txt
 
 ###############################
-#           CONFIGS           #
+#           CONFIGS (Swarm only)
 ###############################
-configs: #Swarm only
+configs:
   nginx_config:
     file: ./config/nginx.conf
