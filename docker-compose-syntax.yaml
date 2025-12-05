@@ -1,0 +1,160 @@
+version: "3.9"  # Docker Compose file format version
+
+###############################
+#          SERVICES           #
+###############################
+services:
+  app:
+    container_name: my_app_container  # Optional: Name of container
+
+    image: nginx:latest   # Use an existing image
+
+    # Alternative to using "image": build from Dockerfile
+    build:
+      context: ./app            # Folder containing Dockerfile
+      dockerfile: Dockerfile    # Optional if file is named Dockerfile
+      args:                     # Build-time variables
+        APP_ENV: production
+      target: final             # Multi-stage build target
+      ssh: default              # Pass SSH keys to build (for private repos)
+
+    command: ["nginx", "-g", "daemon off;"] # Override default command
+    entrypoint: ["/docker-entrypoint.sh"]   # Override entrypoint
+
+    # Pass environment variables
+    environment:
+      APP_MODE: "production"
+      DB_HOST: "mysql"
+      SECRET_KEY: "${SECRET_KEY}"   # Load from shell env
+
+    env_file:
+      - .env        # Load environment variables from file
+
+    working_dir: /usr/src/app     # Set working directory
+
+    user: "1000:1000"             # User inside container
+
+    # Ports mapping
+    ports:
+      - "8080:80"      # host:container
+
+    # Expose port (internal network only)
+    expose:
+      - "80"
+
+    # Volumes binding
+    volumes:
+      - ./app:/usr/share/nginx/html:ro      # Host → Container
+      - uploads:/var/www/uploads            # Named volume
+
+    # Attach to custom networks
+    networks:
+      - frontend
+      - backend
+
+    # Restart policy
+    restart: always  # no | always | on-failure | unless-stopped
+
+    # Health Check
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/"] # Command to run
+      interval: 30s   # Time between checks
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+    # Logging options
+    logging:
+      driver: json-file       # json-file | syslog | journald | none
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    # Resource limits (Swarm only)
+    deploy:
+      replicas: 2     # Number of containers (Swarm mode only)
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512M
+        reservations:
+          cpus: "0.25"
+          memory: 256M
+
+      # Placement constraints (Swarm only)
+      placement:
+        constraints:
+          - "node.role == worker"
+          - "node.labels.region == india"
+
+    # Depends on ensures startup order (non-blocking delay)
+    depends_on:
+      - mysql
+      - redis
+
+    # Device mapping (for hardware access)
+    devices:
+      - "/dev/ttyUSB0:/dev/ttyUSB0"
+
+    # TTY mode for interactive containers
+    tty: true
+    stdin_open: true  # Keep STDIN open
+
+  ####################################
+  # Another Example Service - MySQL
+  ####################################
+  mysql:
+    image: mysql:8
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpass
+      MYSQL_DATABASE: appdb
+    volumes:
+      - mysql_data:/var/lib/mysql
+    networks:
+      - backend
+
+  ####################################
+  # Redis Example
+  ####################################
+  redis:
+    image: redis:7
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    networks:
+      - backend
+
+###############################
+#          VOLUMES            #
+###############################
+volumes:
+  uploads: {}     # Named volume
+  mysql_data: {}  # Persistent MySQL storage
+
+###############################
+#          NETWORKS           #
+###############################
+networks:
+  frontend:
+    driver: bridge    # Default driver
+  backend:
+    driver: bridge
+
+###############################
+#           SECRETS           #
+###############################
+secrets:
+  db_password:
+    file: ./secrets/db_password.txt     # Load secret from file
+
+###############################
+#           CONFIGS           #
+###############################
+configs:
+  nginx_config:
+    file: ./config/nginx.conf
