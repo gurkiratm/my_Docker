@@ -1,0 +1,122 @@
+#----------------------------------------------
+# BASE IMAGE (must be the first instruction)
+# Defines the starting image for this Dockerfile.
+# Multi-stage builds can use multiple FROM lines, each with an alias.
+#----------------------------------------------
+FROM python:3.11-slim AS base   # Define base image and stage name (for multi-stage builds)
+
+#----------------------------------------------
+# LABELS (metadata for image scanners)
+# Useful for scanning, versioning, ownership, and automation.
+#----------------------------------------------
+LABEL maintainer="Your Name <you@example.com>"
+LABEL version="1.0"
+LABEL description="This is a sample Dockerfile with full syntax explained."
+
+#----------------------------------------------
+# ARG (Build-time variables)
+# Available ONLY during build.
+# Not available at runtime unless copied to ENV.
+#----------------------------------------------
+ARG APP_ENV=production           # Passed with: docker build --build-arg APP_ENV=dev
+ARG APP_VERSION=1.0
+
+#----------------------------------------------
+# ENV (Runtime environment variables)
+# Persist into the final image and are available inside the container.
+# Accessible with: echo $ENV_VAR
+#----------------------------------------------
+ENV PYTHONUNBUFFERED=1            # Keep Python output visible
+ENV APP_HOME=/usr/src/app
+
+#----------------------------------------------
+# WORKDIR (Set working directory)
+# Automatically creates directory if it does not exist.
+# All following RUN/COPY/ENTRYPOINT/CMD instructions run inside this directory.
+#----------------------------------------------
+WORKDIR $APP_HOME
+
+#----------------------------------------------
+# USER (Run container as non-root for security)
+# Uncomment after creating the user (via RUN adduser/addgroup).
+#----------------------------------------------
+# USER appuser
+
+#----------------------------------------------
+# COPY AND ADD
+# COPY: preferred for copying local files into the image.
+# ADD: behaves like COPY + can auto-extract archives + supports remote URLs.
+#----------------------------------------------
+COPY ./requirements.txt .          # # Copies files/directories from host → image WORKDIR.
+ADD ./configs.tar.gz /etc/config/  # Add and auto-extract tar, Use ONLY when extraction/URL behavior is required.
+
+#----------------------------------------------
+# RUN (Execute commands during build)
+# Each RUN creates a new layer.
+# Used to install packages, dependencies, configs, etc.
+#----------------------------------------------
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      curl vim                                                            \
+    && pip install --no-cache-dir -r requirements.txt                    \
+    && rm -rf /var/lib/apt/lists/*                                       \
+    && echo "Build environment = $APP_ENV"                                # Using ARG inside RUN
+
+#----------------------------------------------
+# EXPOSE (Document container port)
+# Does NOT publish ports automatically.
+# Only a documentation hint for users/orchestrators.
+#----------------------------------------------
+EXPOSE 8080                     # Informational only (not actually binding)
+
+#----------------------------------------------
+# VOLUME (Declare mount points for persistent storage)
+# When container runs, Docker attaches a named/anonymous volume here.
+# Useful for logs, data directories, uploads, etc.
+#----------------------------------------------
+VOLUME ["/data", "/var/log/app"]
+
+#----------------------------------------------
+# HEALTHCHECK (Container health verification)
+# Tells Docker how to test if the container is healthy.
+# IMPORTANT:
+# *Who runs the health check?*
+# → Docker Engine itself runs the health check command inside the container like "docker exec <container-id> /bin/sh -c "<your healthcheck command>""
+# The application does NOT run the command — Docker daemon does.
+#----------------------------------------------
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=5s \
+  CMD curl -f http://localhost:8080/health || exit 1
+
+#----------------------------------------------
+# ENTRYPOINT vs CMD
+#
+# ENTRYPOINT: main process — hard to override at runtime.
+# CMD: default arguments — easily overridden via `docker run`.
+#----------------------------------------------
+ENTRYPOINT ["python3", "app.py"]
+
+# CMD: default args to ENTRYPOINT — can be overridden
+CMD ["--port", "8080"]
+
+#----------------------------------------------
+# MULTI-STAGE BUILDS (Optional but recommended)
+# Optimizes image size by separating build and runtime stages.
+#----------------------------------------------
+
+#-------------- STAGE 1: Builder ----------------
+FROM node:20 AS builder
+
+WORKDIR /build
+COPY . .
+RUN npm install && npm run build    # Build react/node/etc.   # compile, bundle, etc.
+
+#-------------- STAGE 2: Final Runtime ---------
+FROM nginx:alpine AS final
+
+# Copy artifacts from "builder" stage
+COPY --from=builder /build/dist /usr/share/nginx/html
+
+# Expose port
+EXPOSE 80
+
+# Run nginx as the main process
+CMD ["nginx", "-g", "daemon off;"]
